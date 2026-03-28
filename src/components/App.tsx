@@ -25,13 +25,22 @@ interface AppProps {
 type Tab = "authored" | "reviewing";
 type ActionStatus = { type: "idle" } | { type: "running"; label: string } | { type: "result"; message: string; color: string };
 
+interface CopilotJob {
+  prNumber: number;
+  prTitle: string;
+  action: string;
+  output: string[];
+  status: "running" | "done" | "failed";
+  exitCode?: number;
+}
+
 export function App({ config }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { authored, reviewing, loading, error, lastRefresh, changes, refresh } = usePRData(config);
   const [activeTab, setActiveTab] = useState<Tab>("authored");
   const [selectedPR, setSelectedPR] = useState<PR | null>(null);
   const [actionStatus, setActionStatus] = useState<ActionStatus>({ type: "idle" });
-  const [copilotOutput, setCopilotOutput] = useState<string[]>([]);
+  const [jobs, setJobs] = useState<Map<number, CopilotJob>>(new Map());
 
   const runAction = useCallback(async (label: string, fn: () => Promise<string>) => {
     setActionStatus({ type: "running", label });
@@ -47,28 +56,49 @@ export function App({ config }: AppProps): React.ReactElement {
     }
   }, [refresh]);
 
-  const launchCopilotForPR = useCallback(async (pr: PR, promptBuilder: (pr: PR) => string) => {
-    setCopilotOutput([]);
-    setActionStatus({ type: "running", label: "Setting up checkout..." });
+  const launchCopilotForPR = useCallback(async (pr: PR, promptBuilder: (pr: PR) => string, action: string) => {
+    // Don't double-launch for the same PR
+    const existing = jobs.get(pr.number);
+    if (existing?.status === "running") return;
+
+    const job: CopilotJob = {
+      prNumber: pr.number,
+      prTitle: pr.title,
+      action,
+      output: [],
+      status: "running",
+    };
+    setJobs((prev) => new Map(prev).set(pr.number, job));
+    setActionStatus({ type: "running", label: `${action} #${pr.number}...` });
 
     try {
       if (!checkoutExists(pr)) {
         await ensureCheckout(pr, config.repo);
       }
-      setActionStatus({ type: "running", label: "Copilot working..." });
 
       launchCopilot({
         pr,
         prompt: promptBuilder(pr),
         repo: config.repo,
         onOutput: (data) => {
-          setCopilotOutput((prev) => [...prev.slice(-20), data]);
+          setJobs((prev) => {
+            const next = new Map(prev);
+            const j = next.get(pr.number);
+            if (j) next.set(pr.number, { ...j, output: [...j.output.slice(-30), data] });
+            return next;
+          });
         },
         onDone: (code) => {
           const ok = code === 0;
+          setJobs((prev) => {
+            const next = new Map(prev);
+            const j = next.get(pr.number);
+            if (j) next.set(pr.number, { ...j, status: ok ? "done" : "failed", exitCode: code });
+            return next;
+          });
           setActionStatus({
             type: "result",
-            message: ok ? "Copilot finished successfully" : `Copilot exited with code ${code}`,
+            message: ok ? `${action} #${pr.number} complete` : `${action} #${pr.number} failed (code ${code})`,
             color: ok ? "green" : "red",
           });
           setTimeout(() => setActionStatus({ type: "idle" }), 5000);
@@ -77,10 +107,15 @@ export function App({ config }: AppProps): React.ReactElement {
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to launch Copilot";
+      setJobs((prev) => {
+        const next = new Map(prev);
+        next.set(pr.number, { ...job, status: "failed", output: [...job.output, msg] });
+        return next;
+      });
       setActionStatus({ type: "result", message: msg, color: "red" });
       setTimeout(() => setActionStatus({ type: "idle" }), 5000);
     }
-  }, [refresh, config.repo]);
+  }, [refresh, config.repo, jobs]);
 
   useInput((input, key) => {
     if (input === "q") {
@@ -110,9 +145,9 @@ export function App({ config }: AppProps): React.ReactElement {
         return;
       }
       if (input === "o") openInBrowser(selectedPR);
-      if (input === "r") launchCopilotForPR(selectedPR, buildReviewPrompt);
-      if (input === "f") launchCopilotForPR(selectedPR, buildFixCIPrompt);
-      if (input === "t") launchCopilotForPR(selectedPR, buildTriagePrompt);
+      if (input === "r") launchCopilotForPR(selectedPR, buildReviewPrompt, "Review");
+      if (input === "f") launchCopilotForPR(selectedPR, buildFixCIPrompt, "Fix CI");
+      if (input === "t") launchCopilotForPR(selectedPR, buildTriagePrompt, "Triage");
       if (input === "a") runAction("Approving", () => approvePR(selectedPR, config.repo));
       if (input === "m") runAction("Merging", () => mergePR(selectedPR, config.repo));
     }
@@ -211,12 +246,26 @@ export function App({ config }: AppProps): React.ReactElement {
         </Box>
       )}
 
-      {/* Copilot Output */}
-      {copilotOutput.length > 0 && (
+      {/* Copilot Jobs */}
+      {jobs.size > 0 && (
         <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="yellow" paddingX={1}>
-          <Text bold color="yellow">Copilot Output</Text>
-          {copilotOutput.slice(-5).map((line, i) => (
-            <Text key={i} dimColor>{line.trim()}</Text>
+          <Text bold color="yellow">Copilot Tasks ({[...jobs.values()].filter((j) => j.status === "running").length} running)</Text>
+          {[...jobs.values()].map((job) => (
+            <Box key={job.prNumber} flexDirection="column">
+              <Box gap={1}>
+                <Text color={job.status === "running" ? "yellow" : job.status === "done" ? "green" : "red"}>
+                  {job.status === "running" ? "⏳" : job.status === "done" ? "✓" : "✗"}
+                </Text>
+                <Text bold>#{job.prNumber}</Text>
+                <Text>{job.action}</Text>
+                <Text dimColor>{job.prTitle.length > 40 ? job.prTitle.slice(0, 37) + "…" : job.prTitle}</Text>
+              </Box>
+              {job.status === "running" && job.output.length > 0 && (
+                <Box paddingLeft={4}>
+                  <Text dimColor>{job.output[job.output.length - 1]?.trim().slice(0, 80)}</Text>
+                </Box>
+              )}
+            </Box>
           ))}
         </Box>
       )}

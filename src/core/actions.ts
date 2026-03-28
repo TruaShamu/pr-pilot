@@ -93,8 +93,9 @@ export function launchCopilot(task: CopilotTask): { kill: () => void } {
 
   // shell: true is required on Windows for .cmd wrappers.
   // Pass as a single command string with quoted prompt to avoid word-splitting.
+  // --yolo skips all permission prompts (user already explicitly triggered the action).
   const escaped = task.prompt.replace(/"/g, '\\"');
-  const command = `copilot -p "${escaped}"`;
+  const command = `copilot -p "${escaped}" --yolo`;
 
   const child = spawn(command, [], {
     cwd,
