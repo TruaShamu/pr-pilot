@@ -4,8 +4,14 @@ import type { PR, CIStatus, CIState, ReviewSummary, PRFilter } from "./types.js"
 function gh(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile("gh", args, { maxBuffer: 10 * 1024 * 1024 }, (err: Error | null, stdout: string, stderr: string) => {
-      if (err) reject(new Error(stderr || err.message));
-      else resolve(stdout.trim());
+      if (err) {
+        // gh sometimes writes git warnings to stderr even on success
+        // Only reject if there's no stdout data
+        if (stdout.trim()) resolve(stdout.trim());
+        else reject(new Error(stderr || err.message));
+      } else {
+        resolve(stdout.trim());
+      }
     });
   });
 }
@@ -44,16 +50,12 @@ export async function listPRs(filter: PRFilter, repo?: string): Promise<PR[]> {
 
   if (repo) {
     args.push("--repo", repo);
-    // For remote repos, list all PRs (not just @me)
-    if (filter === "review-requested") {
-      args.push("--search", "review-requested:@me state:open");
-    }
-  } else {
-    const searchQuery = filter === "authored"
-      ? "author:@me state:open"
-      : "review-requested:@me state:open";
-    args.push("--search", searchQuery);
   }
+
+  const searchQuery = filter === "authored"
+    ? "author:@me state:open"
+    : "review-requested:@me state:open";
+  args.push("--search", searchQuery);
 
   const raw = await gh(args);
 
