@@ -94,7 +94,6 @@ export function launchCopilot(task: CopilotTask): { kill: () => void } {
   const child = spawn("copilot", ["-p", task.prompt], {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
-    shell: true,
   });
 
   child.stdout?.on("data", (data: Buffer) => {
