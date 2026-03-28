@@ -125,16 +125,40 @@ export function launchCopilot(task: CopilotTask): { kill: () => void } {
   };
 }
 
-export function buildReviewPrompt(pr: PR): string {
-  return `Use the /pr-review skill to review PR #${pr.number} (${pr.title}). Focus on correctness, performance, cleanness, scalability, and security.`;
+export function buildReviewPrompt(pr: PR, repo?: string): string {
+  const repoFlag = repo ? ` --repo ${repo}` : "";
+  return [
+    `Review PR #${pr.number} (${pr.title}).`,
+    `Focus on: 1) Correctness 2) Performance/Algorithm 3) Cleanness/SOLID 4) Scalability 5) Security.`,
+    `Steps:`,
+    `1. Get the diff: gh pr diff ${pr.number}${repoFlag}`,
+    `2. Analyze the changes against the 5 priorities above.`,
+    `3. Write a concise review summary with findings.`,
+    `4. Post the review as a PR comment: gh pr review ${pr.number}${repoFlag} --comment --body "<your review>"`,
+    `You MUST post the review comment. Do not just print it to stdout.`,
+  ].join(" ");
 }
 
-export function buildFixCIPrompt(pr: PR): string {
-  return `PR #${pr.number} has failing CI. Use the /pr-review skill to check the failing CI logs with get_job_logs, identify the root cause, and fix it. The PR branch is ${pr.branch}.`;
+export function buildFixCIPrompt(pr: PR, repo?: string): string {
+  const repoFlag = repo ? ` --repo ${repo}` : "";
+  return [
+    `PR #${pr.number} has failing CI.`,
+    `1. Check logs: gh pr checks ${pr.number}${repoFlag} then gh run view <run-id>${repoFlag} --log-failed`,
+    `2. Identify the root cause from the logs.`,
+    `3. Fix the issue in the code.`,
+    `4. Commit and push to branch ${pr.branch}.`,
+  ].join(" ");
 }
 
-export function buildTriagePrompt(pr: PR): string {
-  return `Use the /pr-review skill to triage the reviewer comments on PR #${pr.number}. Classify each as actionable, moot, clarification, or disagreement. Suggest responses and code fixes.`;
+export function buildTriagePrompt(pr: PR, repo?: string): string {
+  const repoFlag = repo ? ` --repo ${repo}` : "";
+  return [
+    `Triage reviewer comments on PR #${pr.number}.`,
+    `1. Get comments: gh pr view ${pr.number}${repoFlag} --json comments,reviews`,
+    `2. Classify each as: actionable, moot, clarification-needed, or disagreement.`,
+    `3. For actionable items, make the code fixes.`,
+    `4. Reply to each comment with your classification and response: gh pr comment ${pr.number}${repoFlag} --body "<response>"`,
+  ].join(" ");
 }
 
 // --- Helpers ---

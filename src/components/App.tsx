@@ -145,9 +145,9 @@ export function App({ config }: AppProps): React.ReactElement {
         return;
       }
       if (input === "o") openInBrowser(selectedPR);
-      if (input === "r") launchCopilotForPR(selectedPR, buildReviewPrompt, "Review");
-      if (input === "f") launchCopilotForPR(selectedPR, buildFixCIPrompt, "Fix CI");
-      if (input === "t") launchCopilotForPR(selectedPR, buildTriagePrompt, "Triage");
+      if (input === "r") launchCopilotForPR(selectedPR, (pr) => buildReviewPrompt(pr, config.repo), "Review");
+      if (input === "f") launchCopilotForPR(selectedPR, (pr) => buildFixCIPrompt(pr, config.repo), "Fix CI");
+      if (input === "t") launchCopilotForPR(selectedPR, (pr) => buildTriagePrompt(pr, config.repo), "Triage");
       if (input === "a") runAction("Approving", () => approvePR(selectedPR, config.repo));
       if (input === "m") runAction("Merging", () => mergePR(selectedPR, config.repo));
     }
