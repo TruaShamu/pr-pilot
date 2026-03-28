@@ -1,6 +1,7 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { CopilotClient, approveAll } from "@github/copilot-sdk";
 import type { PR } from "./types.js";
 
 // --- Actions: things you can do to a PR from the TUI ---
@@ -87,41 +88,77 @@ export interface CopilotTask {
   onDone: (exitCode: number) => void;
 }
 
+// Singleton client — shared across all tasks
+let _client: CopilotClient | null = null;
+
+async function getClient(): Promise<CopilotClient> {
+  if (!_client) {
+    _client = new CopilotClient();
+    await _client.start();
+  }
+  return _client;
+}
+
 export function launchCopilot(task: CopilotTask): { kill: () => void } {
-  const coPath = checkoutPath(task.pr);
-  const cwd = existsSync(coPath) ? coPath : process.cwd();
+  let aborted = false;
+  let abortSession: (() => Promise<void>) | null = null;
 
-  // Use PowerShell as shell on Windows — it resolves .cmd wrappers and PATH reliably
-  const escaped = task.prompt.replace(/"/g, '`"');
-  const command = process.platform === "win32"
-    ? `copilot -p "${escaped}" --yolo`
-    : `copilot -p "${task.prompt.replace(/"/g, '\\"')}" --yolo`;
+  (async () => {
+    try {
+      const client = await getClient();
+      const coPath = checkoutPath(task.pr);
+      const cwd = existsSync(coPath) ? coPath : process.cwd();
 
-  const child = spawn(command, [], {
-    cwd,
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: process.platform === "win32" ? "powershell.exe" : true,
-  });
+      const session = await client.createSession({
+        workingDirectory: cwd,
+        onPermissionRequest: approveAll,
+        onEvent: (event) => {
+          switch (event.type) {
+            case "assistant.message_delta":
+              task.onOutput((event.data as any).content ?? "");
+              break;
+            case "assistant.message":
+              task.onOutput((event.data as any).content ?? "");
+              break;
+            case "tool.execution_start":
+              task.onOutput(`[tool] ${(event.data as any).toolName ?? "unknown"}...`);
+              break;
+            case "session.error":
+              task.onOutput(`[error] ${(event.data as any).message ?? "unknown error"}`);
+              break;
+            case "assistant.intent":
+              task.onOutput(`[intent] ${(event.data as any).intent ?? ""}`);
+              break;
+          }
+        },
+      });
 
-  child.stdout?.on("data", (data: Buffer) => {
-    task.onOutput(data.toString());
-  });
+      abortSession = () => session.abort();
 
-  child.stderr?.on("data", (data: Buffer) => {
-    task.onOutput(data.toString());
-  });
+      if (aborted) {
+        await session.disconnect();
+        return;
+      }
 
-  child.on("error", (err) => {
-    task.onOutput(`Error: ${err.message}`);
-    task.onDone(1);
-  });
+      await session.sendAndWait(
+        { prompt: task.prompt },
+        300000 // 5 minute timeout
+      );
 
-  child.on("close", (code) => {
-    task.onDone(code ?? 1);
-  });
+      await session.disconnect();
+      task.onDone(0);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Copilot SDK error";
+      task.onOutput(`[error] ${msg}`);
+      task.onDone(1);
+    }
+  })();
 
   return {
-    kill: () => child.kill(),
+    kill: () => {
+      aborted = true;
+      abortSession?.();
+    },
   };
 }
 

@@ -21,6 +21,7 @@
   "author": "TruaShamu",
   "license": "MIT",
   "dependencies": {
+    "@github/copilot-sdk": "^0.2.0",
     "ink": "^6.8.0",
     "ink-scroll-view": "^0.3.6",
     "ink-spinner": "^5.0.0",
