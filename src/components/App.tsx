@@ -186,10 +186,23 @@ export function App({ config }: AppProps): React.ReactElement {
           {selectedPR.topics.length > 0 && (
             <Text>Topics: {selectedPR.topics.join(", ")}</Text>
           )}
-          <Box marginTop={1}>
-            <Text dimColor>
-              [Esc] Back  [r] Review  [f] Fix CI  [t] Triage  [a] Approve  [m] Merge  [o] Open
+          <Box marginTop={1} gap={1}>
+            <Text color="white">[Esc] Back</Text>
+            <Text color="white">[r] Review</Text>
+            <Text color={selectedPR.ci.state === "fail" ? "red" : "gray"} bold={selectedPR.ci.state === "fail"}>
+              [f] Fix CI
             </Text>
+            <Text color={selectedPR.unresolvedThreads > 0 ? "yellow" : "gray"} bold={selectedPR.unresolvedThreads > 0}>
+              [t] Triage
+            </Text>
+            <Text color={activeTab === "reviewing" ? "green" : "gray"} bold={activeTab === "reviewing"}>
+              [a] Approve
+            </Text>
+            <Text color={activeTab === "authored" && selectedPR.ci.state === "pass" && selectedPR.reviews.approved > 0 ? "green" : "gray"}
+              bold={activeTab === "authored" && selectedPR.ci.state === "pass" && selectedPR.reviews.approved > 0}>
+              [m] Merge
+            </Text>
+            <Text color="white">[o] Open</Text>
           </Box>
         </Box>
       )}
