@@ -39,8 +39,8 @@ export function usePRData(config: Config): PRData {
     setError(null);
     try {
       const [rawAuthored, rawReviewing] = await Promise.all([
-        listPRs("authored"),
-        listPRs("review-requested"),
+        listPRs("authored", config.repo),
+        listPRs("review-requested", config.repo),
       ]);
 
       const allAuthored = classifyAll(rawAuthored, config.topics, config.defaultTopic);

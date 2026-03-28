@@ -37,17 +37,23 @@ const PR_FIELDS = [
   "isDraft",
 ].join(",");
 
-export async function listPRs(filter: PRFilter): Promise<PR[]> {
-  const searchQuery = filter === "authored"
-    ? "author:@me state:open"
-    : "review-requested:@me state:open";
+export async function listPRs(filter: PRFilter, repo?: string): Promise<PR[]> {
+  const args = ["pr", "list", "--state=open", "--json", PR_FIELDS, "--limit", "50"];
 
-  const raw = await gh([
-    "pr", "list",
-    "--search", searchQuery,
-    "--json", PR_FIELDS,
-    "--limit", "50",
-  ]);
+  if (repo) {
+    args.push("--repo", repo);
+    // For remote repos, list all PRs (not just @me)
+    if (filter === "review-requested") {
+      args.push("--search", "review-requested:@me state:open");
+    }
+  } else {
+    const searchQuery = filter === "authored"
+      ? "author:@me state:open"
+      : "review-requested:@me state:open";
+    args.push("--search", searchQuery);
+  }
+
+  const raw = await gh(args);
 
   if (!raw) return [];
   const items: GHPullRequest[] = JSON.parse(raw);
@@ -55,10 +61,10 @@ export async function listPRs(filter: PRFilter): Promise<PR[]> {
   const prs: PR[] = await Promise.all(
     items.map(async (item) => {
       const [ci, reviews, files, threads] = await Promise.all([
-        getCIStatus(item.number),
-        getReviewSummary(item.number),
-        getFiles(item.number),
-        getUnresolvedThreadCount(item.number),
+        getCIStatus(item.number, repo),
+        getReviewSummary(item.number, repo),
+        getFiles(item.number, repo),
+        getUnresolvedThreadCount(item.number, repo),
       ]);
 
       return {
@@ -83,12 +89,11 @@ export async function listPRs(filter: PRFilter): Promise<PR[]> {
   return prs;
 }
 
-export async function getCIStatus(prNumber: number): Promise<CIStatus> {
+export async function getCIStatus(prNumber: number, repo?: string): Promise<CIStatus> {
   try {
-    const raw = await gh([
-      "pr", "checks", String(prNumber),
-      "--json", "name,state,conclusion",
-    ]);
+    const args = ["pr", "checks", String(prNumber), "--json", "name,state,conclusion"];
+    if (repo) args.push("--repo", repo);
+    const raw = await gh(args);
     if (!raw) return { state: "none", total: 0, passed: 0, failed: 0, running: 0 };
 
     const checks: { state: string; conclusion: string }[] = JSON.parse(raw);
@@ -110,12 +115,11 @@ export async function getCIStatus(prNumber: number): Promise<CIStatus> {
   }
 }
 
-export async function getReviewSummary(prNumber: number): Promise<ReviewSummary> {
+export async function getReviewSummary(prNumber: number, repo?: string): Promise<ReviewSummary> {
   try {
-    const raw = await gh([
-      "pr", "view", String(prNumber),
-      "--json", "reviews",
-    ]);
+    const args = ["pr", "view", String(prNumber), "--json", "reviews"];
+    if (repo) args.push("--repo", repo);
+    const raw = await gh(args);
     if (!raw) return { approved: 0, changesRequested: 0, commented: 0, pending: 0 };
 
     const data: { reviews: { state: string; author: { login: string } }[] } = JSON.parse(raw);
@@ -140,12 +144,11 @@ export async function getReviewSummary(prNumber: number): Promise<ReviewSummary>
   }
 }
 
-export async function getFiles(prNumber: number): Promise<string[]> {
+export async function getFiles(prNumber: number, repo?: string): Promise<string[]> {
   try {
-    const raw = await gh([
-      "pr", "view", String(prNumber),
-      "--json", "files",
-    ]);
+    const args = ["pr", "view", String(prNumber), "--json", "files"];
+    if (repo) args.push("--repo", repo);
+    const raw = await gh(args);
     if (!raw) return [];
     const data: { files: { path: string }[] } = JSON.parse(raw);
     return data.files.map((f) => f.path);
@@ -154,12 +157,11 @@ export async function getFiles(prNumber: number): Promise<string[]> {
   }
 }
 
-export async function getUnresolvedThreadCount(prNumber: number): Promise<number> {
+export async function getUnresolvedThreadCount(prNumber: number, repo?: string): Promise<number> {
   try {
-    const raw = await gh([
-      "pr", "view", String(prNumber),
-      "--json", "reviewThreads",
-    ]);
+    const args = ["pr", "view", String(prNumber), "--json", "reviewThreads"];
+    if (repo) args.push("--repo", repo);
+    const raw = await gh(args);
     if (!raw) return 0;
     const data: { reviewThreads: { isResolved: boolean }[] } = JSON.parse(raw);
     return data.reviewThreads.filter((t) => !t.isResolved).length;
