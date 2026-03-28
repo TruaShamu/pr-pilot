@@ -7,8 +7,8 @@ import {
   openInBrowser,
   mergePR,
   approvePR,
-  createWorktree,
-  worktreeExists,
+  ensureCheckout,
+  checkoutExists,
   launchCopilot,
   buildReviewPrompt,
   buildFixCIPrompt,
@@ -49,17 +49,18 @@ export function App({ config }: AppProps): React.ReactElement {
 
   const launchCopilotForPR = useCallback(async (pr: PR, promptBuilder: (pr: PR) => string) => {
     setCopilotOutput([]);
-    setActionStatus({ type: "running", label: "Setting up worktree..." });
+    setActionStatus({ type: "running", label: "Setting up checkout..." });
 
     try {
-      if (!worktreeExists(pr)) {
-        await createWorktree(pr);
+      if (!checkoutExists(pr)) {
+        await ensureCheckout(pr, config.repo);
       }
       setActionStatus({ type: "running", label: "Copilot working..." });
 
       launchCopilot({
         pr,
         prompt: promptBuilder(pr),
+        repo: config.repo,
         onOutput: (data) => {
           setCopilotOutput((prev) => [...prev.slice(-20), data]);
         },
@@ -79,7 +80,7 @@ export function App({ config }: AppProps): React.ReactElement {
       setActionStatus({ type: "result", message: msg, color: "red" });
       setTimeout(() => setActionStatus({ type: "idle" }), 5000);
     }
-  }, [refresh]);
+  }, [refresh, config.repo]);
 
   useInput((input, key) => {
     if (input === "q") {
@@ -112,8 +113,8 @@ export function App({ config }: AppProps): React.ReactElement {
       if (input === "r") launchCopilotForPR(selectedPR, buildReviewPrompt);
       if (input === "f") launchCopilotForPR(selectedPR, buildFixCIPrompt);
       if (input === "t") launchCopilotForPR(selectedPR, buildTriagePrompt);
-      if (input === "a") runAction("Approving", () => approvePR(selectedPR));
-      if (input === "m") runAction("Merging", () => mergePR(selectedPR));
+      if (input === "a") runAction("Approving", () => approvePR(selectedPR, config.repo));
+      if (input === "m") runAction("Merging", () => mergePR(selectedPR, config.repo));
     }
   });
 

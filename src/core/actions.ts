@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 import type { PR } from "./types.js";
 
 // --- Actions: things you can do to a PR from the TUI ---
@@ -11,55 +11,70 @@ export function openInBrowser(pr: PR): void {
   execFile(cmd, args, () => {});
 }
 
-export async function mergePR(pr: PR): Promise<string> {
-  return ghExec(["pr", "merge", String(pr.number), "--squash", "--auto"]);
+export async function mergePR(pr: PR, repo?: string): Promise<string> {
+  const args = ["pr", "merge", String(pr.number), "--squash", "--auto"];
+  if (repo) args.push("--repo", repo);
+  return ghExec(args);
 }
 
-export async function approvePR(pr: PR, body = "LGTM"): Promise<string> {
-  return ghExec(["pr", "review", String(pr.number), "--approve", "--body", body]);
+export async function approvePR(pr: PR, repo?: string, body = "LGTM"): Promise<string> {
+  const args = ["pr", "review", String(pr.number), "--approve", "--body", body];
+  if (repo) args.push("--repo", repo);
+  return ghExec(args);
 }
 
-// --- Worktree management ---
+// --- Checkout management ---
+// For remote repos: clone via `gh repo clone` + checkout PR branch
+// For local repos: use git worktrees
 
-const WORKTREE_ROOT = join(process.cwd(), ".pr-worktrees");
+const CHECKOUT_ROOT = join(process.cwd(), ".pr-worktrees");
 
-export function worktreePath(pr: PR): string {
-  return join(WORKTREE_ROOT, `pr-${pr.number}`);
+export function checkoutPath(pr: PR): string {
+  return join(CHECKOUT_ROOT, `pr-${pr.number}`);
 }
 
-export function worktreeExists(pr: PR): boolean {
-  return existsSync(worktreePath(pr));
+export function checkoutExists(pr: PR): boolean {
+  return existsSync(checkoutPath(pr));
 }
 
-export async function createWorktree(pr: PR): Promise<string> {
-  const wtPath = worktreePath(pr);
+export async function ensureCheckout(pr: PR, repo?: string): Promise<string> {
+  const coPath = checkoutPath(pr);
 
-  if (existsSync(wtPath)) {
-    return wtPath;
+  if (existsSync(coPath)) {
+    return coPath;
   }
 
-  mkdirSync(WORKTREE_ROOT, { recursive: true });
+  mkdirSync(CHECKOUT_ROOT, { recursive: true });
 
-  // Fetch the PR branch first
-  await gitExec(["fetch", "origin", `pull/${pr.number}/head:pr-${pr.number}`]);
-  await gitExec(["worktree", "add", wtPath, `pr-${pr.number}`]);
+  if (repo) {
+    // Remote repo: clone and checkout PR branch
+    await ghExec(["repo", "clone", repo, coPath, "--", "--depth=1"]);
+    await gitExec(["fetch", "origin", `pull/${pr.number}/head:pr-${pr.number}`], coPath);
+    await gitExec(["checkout", `pr-${pr.number}`], coPath);
+  } else {
+    // Local repo: use worktree
+    await gitExec(["fetch", "origin", `pull/${pr.number}/head:pr-${pr.number}`]);
+    await gitExec(["worktree", "add", coPath, `pr-${pr.number}`]);
+  }
 
-  return wtPath;
+  return coPath;
 }
 
-export async function removeWorktree(pr: PR): Promise<void> {
-  const wtPath = worktreePath(pr);
-  if (!existsSync(wtPath)) return;
-  await gitExec(["worktree", "remove", wtPath, "--force"]);
-}
-
-export async function listWorktrees(): Promise<string[]> {
-  const raw = await gitExec(["worktree", "list", "--porcelain"]);
-  return raw
-    .split("\n")
-    .filter((line) => line.startsWith("worktree "))
-    .map((line) => line.slice("worktree ".length))
-    .filter((p) => p.includes(".pr-worktrees"));
+export async function removeCheckout(pr: PR, repo?: string): Promise<void> {
+  const coPath = checkoutPath(pr);
+  if (!existsSync(coPath)) return;
+  if (repo) {
+    // Clone: just remove the directory
+    const rmCmd = process.platform === "win32" ? "cmd" : "rm";
+    const rmArgs = process.platform === "win32"
+      ? ["/c", "rmdir", "/s", "/q", coPath]
+      : ["-rf", coPath];
+    await new Promise<void>((resolve) => {
+      execFile(rmCmd, rmArgs, () => resolve());
+    });
+  } else {
+    await gitExec(["worktree", "remove", coPath, "--force"]);
+  }
 }
 
 // --- Copilot CLI headless dispatch ---
@@ -67,13 +82,14 @@ export async function listWorktrees(): Promise<string[]> {
 export interface CopilotTask {
   pr: PR;
   prompt: string;
+  repo?: string;
   onOutput: (data: string) => void;
   onDone: (exitCode: number) => void;
 }
 
 export function launchCopilot(task: CopilotTask): { kill: () => void } {
-  const wtPath = worktreePath(task.pr);
-  const cwd = existsSync(wtPath) ? wtPath : process.cwd();
+  const coPath = checkoutPath(task.pr);
+  const cwd = existsSync(coPath) ? coPath : process.cwd();
 
   const child = spawn("copilot", ["-p", task.prompt], {
     cwd,
@@ -121,9 +137,9 @@ function ghExec(args: string[]): Promise<string> {
   });
 }
 
-function gitExec(args: string[]): Promise<string> {
+function gitExec(args: string[], cwd?: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("git", args, { maxBuffer: 5 * 1024 * 1024 }, (err: Error | null, stdout: string, stderr: string) => {
+    execFile("git", args, { maxBuffer: 5 * 1024 * 1024, cwd }, (err: Error | null, stdout: string, stderr: string) => {
       if (err) reject(new Error(stderr || err.message));
       else resolve(stdout.trim());
     });
