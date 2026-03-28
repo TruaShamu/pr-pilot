@@ -99,25 +99,27 @@ export async function listPRs(filter: PRFilter, repo?: string): Promise<PR[]> {
 
 export async function getCIStatus(prNumber: number, repo?: string): Promise<CIStatus> {
   try {
-    const args = ["pr", "checks", String(prNumber), "--json", "name,state,conclusion"];
+    const args = ["pr", "checks", String(prNumber), "--json", "name,state"];
     if (repo) args.push("--repo", repo);
     const raw = await gh(args);
     if (!raw) return { state: "none", total: 0, passed: 0, failed: 0, running: 0 };
 
-    const checks: { state: string; conclusion: string }[] = JSON.parse(raw);
+    const checks: { state: string }[] = JSON.parse(raw);
     const total = checks.length;
-    const passed = checks.filter((c) => c.conclusion === "SUCCESS" || c.conclusion === "success").length;
-    const failed = checks.filter((c) => c.conclusion === "FAILURE" || c.conclusion === "failure").length;
-    const running = checks.filter((c) => c.state === "IN_PROGRESS" || c.state === "QUEUED" || c.state === "PENDING").length;
+    const passed = checks.filter((c) => c.state === "SUCCESS").length;
+    const failed = checks.filter((c) => c.state === "FAILURE").length;
+    const running = checks.filter((c) => c.state === "IN_PROGRESS" || c.state === "QUEUED" || c.state === "PENDING" || c.state === "STARTUP_FAILURE").length;
+    const skipped = checks.filter((c) => c.state === "SKIPPED" || c.state === "NEUTRAL").length;
+    const meaningful = total - skipped;
 
     let state: CIState = "none";
-    if (total === 0) state = "none";
+    if (meaningful === 0) state = "none";
     else if (failed > 0) state = "fail";
     else if (running > 0) state = "running";
-    else if (passed === total) state = "pass";
+    else if (passed >= meaningful) state = "pass";
     else state = "pending";
 
-    return { state, total, passed, failed, running };
+    return { state, total: meaningful, passed, failed, running };
   } catch {
     return { state: "none", total: 0, passed: 0, failed: 0, running: 0 };
   }
@@ -167,12 +169,12 @@ export async function getFiles(prNumber: number, repo?: string): Promise<string[
 
 export async function getUnresolvedThreadCount(prNumber: number, repo?: string): Promise<number> {
   try {
-    const args = ["pr", "view", String(prNumber), "--json", "reviewThreads"];
+    const args = ["pr", "view", String(prNumber), "--json", "comments"];
     if (repo) args.push("--repo", repo);
     const raw = await gh(args);
     if (!raw) return 0;
-    const data: { reviewThreads: { isResolved: boolean }[] } = JSON.parse(raw);
-    return data.reviewThreads.filter((t) => !t.isResolved).length;
+    const data: { comments: unknown[] } = JSON.parse(raw);
+    return data.comments.length;
   } catch {
     return 0;
   }
