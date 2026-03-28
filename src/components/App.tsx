@@ -183,9 +183,7 @@ export function App({ config }: AppProps): React.ReactElement {
           {selectedPR.body && (
             <Box marginTop={1} flexDirection="column">
               <Text bold>Description:</Text>
-              <Text wrap="truncate-end">
-                {bodyPreview(selectedPR.body)}
-              </Text>
+              <Text>{bodyPreview(selectedPR.body)}</Text>
             </Box>
           )}
           {selectedPR.topics.length > 0 && (
