@@ -13,6 +13,7 @@ function gh(args: string[]): Promise<string> {
 interface GHPullRequest {
   number: number;
   title: string;
+  body: string;
   author: { login: string };
   headRefName: string;
   baseRefName: string;
@@ -29,6 +30,7 @@ interface GHPullRequest {
 const PR_FIELDS = [
   "number",
   "title",
+  "body",
   "author",
   "headRefName",
   "baseRefName",
@@ -70,6 +72,7 @@ export async function listPRs(filter: PRFilter, repo?: string): Promise<PR[]> {
       return {
         number: item.number,
         title: item.title,
+        body: item.body || "",
         author: item.author.login,
         branch: item.headRefName,
         baseBranch: item.baseRefName,
@@ -85,6 +88,9 @@ export async function listPRs(filter: PRFilter, repo?: string): Promise<PR[]> {
       };
     })
   );
+
+  // Sort by most recently updated first
+  prs.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   return prs;
 }

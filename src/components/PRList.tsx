@@ -78,28 +78,43 @@ export function PRList({ prs, isActive, onSelect, changes }: PRListProps): React
         const ciChanged = changes?.ciChanged.has(pr.number);
         const newComments = changes?.newComments.has(pr.number);
         const highlight = isNew || ciChanged || newComments;
+        // First line of body, cleaned up
+        const desc = pr.body
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l && !l.startsWith("#") && !l.startsWith("<!--") && !l.startsWith("---"))
+          [0] || "";
+        const shortDesc = desc.length > 60 ? desc.slice(0, 57) + "…" : desc;
+
         return (
-          <Box key={`pr-${pr.number}`} paddingX={2} gap={1}>
-            <Text inverse={selected} bold={selected}>
-              {selected ? "›" : " "}
-            </Text>
-            {isNew && <Text color="green" bold>NEW</Text>}
-            <Text color="cyan" inverse={selected}>#{pr.number}</Text>
-            <Text inverse={selected} bold={highlight}>
-              {pr.branch.length > 25 ? pr.branch.slice(0, 22) + "…" : pr.branch}
-            </Text>
-            <Text color={ciChanged ? "magenta" : ciColor(pr.ci)} inverse={selected} bold={ciChanged}>
-              {ciIcon(pr.ci)}
-            </Text>
-            <Text color={reviewColor(pr.reviews)} inverse={selected}>
-              {reviewText(pr.reviews)}
-            </Text>
-            {pr.unresolvedThreads > 0 && (
-              <Text color={newComments ? "magenta" : "yellow"} inverse={selected} bold={newComments}>
-                💬{pr.unresolvedThreads}
+          <Box key={`pr-${pr.number}`} flexDirection="column" paddingX={2}>
+            <Box gap={1}>
+              <Text inverse={selected} bold={selected}>
+                {selected ? "›" : " "}
               </Text>
+              {isNew && <Text color="green" bold>NEW</Text>}
+              <Text color="cyan" inverse={selected}>#{pr.number}</Text>
+              <Text inverse={selected} bold={highlight}>
+                {pr.title.length > 45 ? pr.title.slice(0, 42) + "…" : pr.title}
+              </Text>
+              <Text color={ciChanged ? "magenta" : ciColor(pr.ci)} inverse={selected} bold={ciChanged}>
+                {ciIcon(pr.ci)}
+              </Text>
+              <Text color={reviewColor(pr.reviews)} inverse={selected}>
+                {reviewText(pr.reviews)}
+              </Text>
+              {pr.unresolvedThreads > 0 && (
+                <Text color={newComments ? "magenta" : "yellow"} inverse={selected} bold={newComments}>
+                  💬{pr.unresolvedThreads}
+                </Text>
+              )}
+              <Text dimColor inverse={selected}>{timeAgo(pr.updatedAt)}</Text>
+            </Box>
+            {shortDesc && (
+              <Box paddingLeft={4}>
+                <Text dimColor>{shortDesc}</Text>
+              </Box>
             )}
-            <Text dimColor inverse={selected}>{timeAgo(pr.updatedAt)}</Text>
           </Box>
         );
       })}

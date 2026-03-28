@@ -1,6 +1,7 @@
 export interface PR {
   number: number;
   title: string;
+  body: string;
   author: string;
   branch: string;
   baseBranch: string;

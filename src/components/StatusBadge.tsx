@@ -24,9 +24,9 @@ export function ciColor(ci: CIStatus): string {
 
 export function reviewText(reviews: ReviewSummary): string {
   const parts: string[] = [];
-  if (reviews.approved > 0) parts.push(`${reviews.approved} approved`);
-  if (reviews.changesRequested > 0) parts.push(`${reviews.changesRequested} changes`);
-  if (reviews.pending > 0) parts.push(`${reviews.pending} pending`);
+  if (reviews.approved > 0) parts.push(`✓${reviews.approved} approved`);
+  if (reviews.changesRequested > 0) parts.push(`✗${reviews.changesRequested} changes requested`);
+  if (reviews.pending > 0) parts.push(`○${reviews.pending} pending review`);
   return parts.join(", ") || "No reviews";
 }
 

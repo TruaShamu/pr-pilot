@@ -169,6 +169,20 @@ export function App({ config }: AppProps): React.ReactElement {
           </Box>
           <Text>{selectedPR.branch} → {selectedPR.baseBranch}</Text>
           <Text dimColor>{selectedPR.url}</Text>
+          {selectedPR.body && (
+            <Box marginTop={1} flexDirection="column">
+              <Text bold>Description:</Text>
+              <Text wrap="truncate-end">
+                {selectedPR.body
+                  .split("\n")
+                  .filter((l: string) => !l.startsWith("<!--"))
+                  .slice(0, 5)
+                  .join("\n")
+                  .slice(0, 300)}
+                {selectedPR.body.length > 300 ? "…" : ""}
+              </Text>
+            </Box>
+          )}
           {selectedPR.topics.length > 0 && (
             <Text>Topics: {selectedPR.topics.join(", ")}</Text>
           )}
