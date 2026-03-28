@@ -11,11 +11,18 @@
     "build": "tsc",
     "start": "node dist/cli.js"
   },
-  "keywords": ["pr", "review", "tui", "github", "ink"],
+  "keywords": [
+    "pr",
+    "review",
+    "tui",
+    "github",
+    "ink"
+  ],
   "author": "TruaShamu",
   "license": "MIT",
   "dependencies": {
     "ink": "^6.8.0",
+    "ink-scroll-view": "^0.3.6",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
     "react": "^19.2.4"

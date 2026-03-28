@@ -1,6 +1,7 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import { Box, Text, useInput, useApp } from "ink";
 import Spinner from "ink-spinner";
+import { ScrollView, type ScrollViewRef } from "ink-scroll-view";
 import type { PR, Config } from "../core/types.js";
 import { timeAgo } from "../core/github.js";
 import {
@@ -41,6 +42,8 @@ export function App({ config }: AppProps): React.ReactElement {
   const [selectedPR, setSelectedPR] = useState<PR | null>(null);
   const [actionStatus, setActionStatus] = useState<ActionStatus>({ type: "idle" });
   const [jobs, setJobs] = useState<Map<number, CopilotJob>>(new Map());
+  const [expandedJob, setExpandedJob] = useState<number | null>(null);
+  const scrollRef = useRef<ScrollViewRef>(null);
 
   const runAction = useCallback(async (label: string, fn: () => Promise<string>) => {
     setActionStatus({ type: "running", label });
@@ -127,6 +130,28 @@ export function App({ config }: AppProps): React.ReactElement {
       setSelectedPR(null);
     }
     if (input === "R") refresh();
+
+    // Expanded job output view: scroll with j/k, close with Esc/c
+    if (expandedJob !== null) {
+      if (key.escape || input === "c") {
+        setExpandedJob(null);
+        return;
+      }
+      if (key.upArrow || input === "k") scrollRef.current?.scrollBy(-1);
+      if (key.downArrow || input === "j") scrollRef.current?.scrollBy(1);
+      if (key.pageUp) scrollRef.current?.scrollBy(-(scrollRef.current?.getViewportHeight?.() || 5));
+      if (key.pageDown) scrollRef.current?.scrollBy(scrollRef.current?.getViewportHeight?.() || 5);
+      return;
+    }
+
+    // Toggle job output for selected PR
+    if (input === "c" && selectedPR) {
+      const job = jobs.get(selectedPR.number);
+      if (job) {
+        setExpandedJob(selectedPR.number);
+        return;
+      }
+    }
 
     // Actions on selected PR
     if (selectedPR) {
@@ -247,7 +272,7 @@ export function App({ config }: AppProps): React.ReactElement {
       )}
 
       {/* Copilot Jobs */}
-      {jobs.size > 0 && (
+      {jobs.size > 0 && expandedJob === null && (
         <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="yellow" paddingX={1}>
           <Text bold color="yellow">Copilot Tasks ({[...jobs.values()].filter((j) => j.status === "running").length} running)</Text>
           {[...jobs.values()].map((job) => (
@@ -259,6 +284,7 @@ export function App({ config }: AppProps): React.ReactElement {
                 <Text bold>#{job.prNumber}</Text>
                 <Text>{job.action}</Text>
                 <Text dimColor>{job.prTitle.length > 40 ? job.prTitle.slice(0, 37) + "…" : job.prTitle}</Text>
+                {job.output.length > 0 && <Text dimColor>[c] view output</Text>}
               </Box>
               {job.status === "running" && job.output.length > 0 && (
                 <Box paddingLeft={4}>
@@ -270,10 +296,32 @@ export function App({ config }: AppProps): React.ReactElement {
         </Box>
       )}
 
+      {/* Expanded Job Output (scrollable) */}
+      {expandedJob !== null && jobs.has(expandedJob) && (() => {
+        const job = jobs.get(expandedJob)!;
+        return (
+          <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="yellow" paddingX={1} height={15}>
+            <Box justifyContent="space-between">
+              <Text bold color="yellow">
+                {job.status === "running" ? "⏳" : job.status === "done" ? "✓" : "✗"}{" "}
+                #{job.prNumber} {job.action} — {job.prTitle}
+              </Text>
+              <Text dimColor>[j/k] scroll  [Esc/c] close</Text>
+            </Box>
+            <ScrollView ref={scrollRef} flexGrow={1}>
+              {job.output.map((line, i) => (
+                <Text key={i}>{line.trimEnd()}</Text>
+              ))}
+              {job.output.length === 0 && <Text dimColor>No output yet...</Text>}
+            </ScrollView>
+          </Box>
+        );
+      })()}
+
       {/* Footer */}
       <Box marginTop={1} justifyContent="center">
         <Text dimColor>
-          [Tab] Switch  [j/k] Navigate  [Enter] Select  [R] Refresh  [q] Quit
+          [Tab] Switch  [j/k] Navigate  [Enter] Select  [c] Copilot output  [R] Refresh  [q] Quit
         </Text>
       </Box>
     </Box>
