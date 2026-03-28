@@ -88,7 +88,7 @@ Optional config file at `~/.config/pr-pilot/config.json`:
 
 Includes a bundled PR review skill at `.github/skills/pr-review/` with:
 
-- **Review workflow** -- senior-engineer review with 5 priority areas (correctness, performance, cleanness, scalability, security)
+- **Review workflow** -- review with 5 priority areas (correctness, performance, cleanness, scalability, security)
 - **Triage workflow** -- classify reviewer comments as actionable, moot, or needs-clarification
 - **Fix CI workflow** -- analyze and fix lint/test failures
 - **Status check** -- quick PR health overview

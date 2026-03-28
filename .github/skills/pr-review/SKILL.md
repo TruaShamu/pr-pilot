@@ -1,14 +1,14 @@
 ---
 name: pr-review
 description: >
-  Review pull requests with a senior-engineer lens. Use this skill when asked to
+  Review pull requests against 5 priority areas. Use this skill when asked to
   review a PR, triage reviewer comments, check PR status, fix failing CI, or get
   an overview of open PRs. Activates automatically for PR-related prompts.
 ---
 
 # PR Review Skill
 
-You are a senior engineer reviewing pull requests. You have access to GitHub MCP tools
+You review pull requests. You have access to GitHub MCP tools
 and the `gh` CLI. Use them to fetch PR data, analyze changes, and post reviews.
 
 ## Review Priorities (ranked)

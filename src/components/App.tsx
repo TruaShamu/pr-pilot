@@ -25,6 +25,7 @@ interface AppProps {
 
 type Tab = "authored" | "reviewing";
 type ActionStatus = { type: "idle" } | { type: "running"; label: string } | { type: "result"; message: string; color: string };
+type TasksView = "hidden" | "list" | "detail";
 
 interface CopilotJob {
   prNumber: number;
@@ -32,7 +33,10 @@ interface CopilotJob {
   action: string;
   output: string[];
   status: "running" | "done" | "failed";
+  outcome?: "approved" | "changes_requested" | "commented" | "fixed" | "triaged";
   exitCode?: number;
+  startedAt: Date;
+  finishedAt?: Date;
 }
 
 export function App({ config }: AppProps): React.ReactElement {
@@ -42,6 +46,8 @@ export function App({ config }: AppProps): React.ReactElement {
   const [selectedPR, setSelectedPR] = useState<PR | null>(null);
   const [actionStatus, setActionStatus] = useState<ActionStatus>({ type: "idle" });
   const [jobs, setJobs] = useState<Map<number, CopilotJob>>(new Map());
+  const [tasksView, setTasksView] = useState<TasksView>("hidden");
+  const [tasksCursor, setTasksCursor] = useState(0);
   const [expandedJob, setExpandedJob] = useState<number | null>(null);
   const scrollRef = useRef<ScrollViewRef>(null);
 
@@ -70,6 +76,7 @@ export function App({ config }: AppProps): React.ReactElement {
       action,
       output: [],
       status: "running",
+      startedAt: new Date(),
     };
     setJobs((prev) => new Map(prev).set(pr.number, job));
     setActionStatus({ type: "running", label: `${action} #${pr.number}...` });
@@ -96,7 +103,19 @@ export function App({ config }: AppProps): React.ReactElement {
           setJobs((prev) => {
             const next = new Map(prev);
             const j = next.get(pr.number);
-            if (j) next.set(pr.number, { ...j, status: ok ? "done" : "failed", exitCode: code });
+            if (j) {
+              // Detect outcome from output
+              const fullOutput = j.output.join(" ").toLowerCase();
+              let outcome: CopilotJob["outcome"];
+              if (ok) {
+                if (fullOutput.includes("approve") || fullOutput.includes("lgtm")) outcome = "approved";
+                else if (fullOutput.includes("changes requested") || fullOutput.includes("request changes")) outcome = "changes_requested";
+                else if (action === "Fix CI") outcome = "fixed";
+                else if (action === "Triage") outcome = "triaged";
+                else outcome = "commented";
+              }
+              next.set(pr.number, { ...j, status: ok ? "done" : "failed", exitCode: code, finishedAt: new Date(), outcome });
+            }
             return next;
           });
           setActionStatus({
@@ -131,10 +150,11 @@ export function App({ config }: AppProps): React.ReactElement {
     }
     if (input === "R") refresh();
 
-    // Expanded job output view: scroll with j/k, close with Esc/c
+    // Expanded job detail: scroll output with j/k, Esc goes back to task list
     if (expandedJob !== null) {
-      if (key.escape || input === "c") {
+      if (key.escape) {
         setExpandedJob(null);
+        setTasksView("list");
         return;
       }
       if (key.upArrow || input === "k") scrollRef.current?.scrollBy(-1);
@@ -144,13 +164,33 @@ export function App({ config }: AppProps): React.ReactElement {
       return;
     }
 
-    // Toggle job output for selected PR
-    if (input === "c" && selectedPR) {
-      const job = jobs.get(selectedPR.number);
-      if (job) {
-        setExpandedJob(selectedPR.number);
+    // Tasks list view: navigate with j/k, Enter to drill in, Esc to close
+    if (tasksView === "list") {
+      const jobList = [...jobs.values()];
+      if (key.escape) {
+        setTasksView("hidden");
         return;
       }
+      if (key.upArrow || input === "k") {
+        setTasksCursor((c) => Math.max(0, c - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setTasksCursor((c) => Math.min(jobList.length - 1, c + 1));
+        return;
+      }
+      if (key.return && jobList[tasksCursor]) {
+        setExpandedJob(jobList[tasksCursor].prNumber);
+        return;
+      }
+      return;
+    }
+
+    // [c] toggles tasks list
+    if (input === "c" && jobs.size > 0) {
+      setTasksView("list");
+      setTasksCursor(0);
+      return;
     }
 
     // Actions on selected PR
@@ -271,28 +311,58 @@ export function App({ config }: AppProps): React.ReactElement {
         </Box>
       )}
 
-      {/* Copilot Jobs */}
-      {jobs.size > 0 && expandedJob === null && (
+      {/* Copilot Tasks: compact summary (always visible when tasks exist and not in task view) */}
+      {jobs.size > 0 && tasksView === "hidden" && expandedJob === null && (() => {
+        const running = [...jobs.values()].filter((j) => j.status === "running").length;
+        const done = [...jobs.values()].filter((j) => j.status === "done").length;
+        const failed = [...jobs.values()].filter((j) => j.status === "failed").length;
+        return (
+          <Box marginTop={1} gap={1} paddingX={1}>
+            <Text bold color="yellow">Tasks:</Text>
+            {running > 0 && <Text color="yellow">⏳{running} running</Text>}
+            {done > 0 && <Text color="green">✓{done} done</Text>}
+            {failed > 0 && <Text color="red">✗{failed} failed</Text>}
+            <Text dimColor>[c] view</Text>
+          </Box>
+        );
+      })()}
+
+      {/* Copilot Tasks: navigable list */}
+      {tasksView === "list" && expandedJob === null && (
         <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="yellow" paddingX={1}>
-          <Text bold color="yellow">Copilot Tasks ({[...jobs.values()].filter((j) => j.status === "running").length} running)</Text>
-          {[...jobs.values()].map((job) => (
-            <Box key={job.prNumber} flexDirection="column">
-              <Box gap={1}>
+          <Box justifyContent="space-between">
+            <Text bold color="yellow">Copilot Tasks ({jobs.size})</Text>
+            <Text dimColor>[j/k] navigate  [Enter] view output  [Esc] close</Text>
+          </Box>
+          {[...jobs.values()].map((job, idx) => {
+            const selected = idx === tasksCursor;
+            const elapsed = job.finishedAt
+              ? `${Math.round((job.finishedAt.getTime() - job.startedAt.getTime()) / 1000)}s`
+              : `${Math.round((Date.now() - job.startedAt.getTime()) / 1000)}s`;
+            const outcomeText = job.outcome
+              ? { approved: "Approved", changes_requested: "Changes requested", commented: "Commented", fixed: "Fixed", triaged: "Triaged" }[job.outcome]
+              : job.status === "failed" ? "Failed" : job.status === "running" ? "Running..." : "Done";
+            const outcomeColor = job.outcome === "approved" ? "green"
+              : job.outcome === "changes_requested" ? "red"
+              : job.status === "failed" ? "red"
+              : job.status === "running" ? "yellow"
+              : "cyan";
+            return (
+              <Box key={job.prNumber} gap={1} paddingX={1}>
+                <Text inverse={selected} bold={selected}>
+                  {selected ? "›" : " "}
+                </Text>
                 <Text color={job.status === "running" ? "yellow" : job.status === "done" ? "green" : "red"}>
                   {job.status === "running" ? "⏳" : job.status === "done" ? "✓" : "✗"}
                 </Text>
-                <Text bold>#{job.prNumber}</Text>
-                <Text>{job.action}</Text>
-                <Text dimColor>{job.prTitle.length > 40 ? job.prTitle.slice(0, 37) + "…" : job.prTitle}</Text>
-                {job.output.length > 0 && <Text dimColor>[c] view output</Text>}
+                <Text bold inverse={selected}>#{job.prNumber}</Text>
+                <Text inverse={selected}>{job.action}</Text>
+                <Text color={outcomeColor} bold>{outcomeText}</Text>
+                <Text dimColor>({elapsed})</Text>
+                <Text dimColor>{job.prTitle.length > 30 ? job.prTitle.slice(0, 27) + "…" : job.prTitle}</Text>
               </Box>
-              {job.status === "running" && job.output.length > 0 && (
-                <Box paddingLeft={4}>
-                  <Text dimColor>{job.output[job.output.length - 1]?.trim().slice(0, 80)}</Text>
-                </Box>
-              )}
-            </Box>
-          ))}
+            );
+          })}
         </Box>
       )}
 
@@ -306,7 +376,7 @@ export function App({ config }: AppProps): React.ReactElement {
                 {job.status === "running" ? "⏳" : job.status === "done" ? "✓" : "✗"}{" "}
                 #{job.prNumber} {job.action} — {job.prTitle}
               </Text>
-              <Text dimColor>[j/k] scroll  [Esc/c] close</Text>
+              <Text dimColor>[j/k] scroll  [Esc] back</Text>
             </Box>
             <ScrollView ref={scrollRef} flexGrow={1}>
               {job.output.map((line, i) => (
