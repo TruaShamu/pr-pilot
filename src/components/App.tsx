@@ -1,9 +1,20 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { Box, Text, useInput, useApp } from "ink";
 import Spinner from "ink-spinner";
-import type { PR, PRFilter, Config, DEFAULT_CONFIG } from "../core/types.js";
-import { listPRs, timeAgo } from "../core/github.js";
-import { classifyAll } from "../core/classifier.js";
+import type { PR, Config } from "../core/types.js";
+import { timeAgo } from "../core/github.js";
+import {
+  openInBrowser,
+  mergePR,
+  approvePR,
+  createWorktree,
+  worktreeExists,
+  launchCopilot,
+  buildReviewPrompt,
+  buildFixCIPrompt,
+  buildTriagePrompt,
+} from "../core/actions.js";
+import { usePRData } from "../hooks/usePRData.js";
 import { PRList } from "./PRList.js";
 
 interface AppProps {
@@ -11,42 +22,63 @@ interface AppProps {
 }
 
 type Tab = "authored" | "reviewing";
+type ActionStatus = { type: "idle" } | { type: "running"; label: string } | { type: "result"; message: string; color: string };
 
 export function App({ config }: AppProps): React.ReactElement {
   const { exit } = useApp();
+  const { authored, reviewing, loading, error, lastRefresh, changes, refresh } = usePRData(config);
   const [activeTab, setActiveTab] = useState<Tab>("authored");
-  const [authoredPRs, setAuthoredPRs] = useState<PR[]>([]);
-  const [reviewingPRs, setReviewingPRs] = useState<PR[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [selectedPR, setSelectedPR] = useState<PR | null>(null);
+  const [actionStatus, setActionStatus] = useState<ActionStatus>({ type: "idle" });
+  const [copilotOutput, setCopilotOutput] = useState<string[]>([]);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const runAction = useCallback(async (label: string, fn: () => Promise<string>) => {
+    setActionStatus({ type: "running", label });
     try {
-      const [authored, reviewing] = await Promise.all([
-        listPRs("authored"),
-        listPRs("review-requested"),
-      ]);
-
-      setAuthoredPRs(classifyAll(authored, config.topics, config.defaultTopic));
-      setReviewingPRs(classifyAll(reviewing, config.topics, config.defaultTopic));
-      setLastRefresh(new Date());
-    } catch (err: any) {
-      setError(err.message || "Failed to fetch PRs");
-    } finally {
-      setLoading(false);
+      const result = await fn();
+      setActionStatus({ type: "result", message: result || `${label} complete`, color: "green" });
+      setTimeout(() => setActionStatus({ type: "idle" }), 3000);
+      refresh();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Action failed";
+      setActionStatus({ type: "result", message: msg, color: "red" });
+      setTimeout(() => setActionStatus({ type: "idle" }), 5000);
     }
-  }, [config]);
+  }, [refresh]);
 
-  // Initial load + auto-refresh
-  useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, config.refreshInterval * 1000);
-    return () => clearInterval(interval);
-  }, [refresh, config.refreshInterval]);
+  const launchCopilotForPR = useCallback(async (pr: PR, promptBuilder: (pr: PR) => string) => {
+    setCopilotOutput([]);
+    setActionStatus({ type: "running", label: "Setting up worktree..." });
+
+    try {
+      if (!worktreeExists(pr)) {
+        await createWorktree(pr);
+      }
+      setActionStatus({ type: "running", label: "Copilot working..." });
+
+      launchCopilot({
+        pr,
+        prompt: promptBuilder(pr),
+        onOutput: (data) => {
+          setCopilotOutput((prev) => [...prev.slice(-20), data]);
+        },
+        onDone: (code) => {
+          const ok = code === 0;
+          setActionStatus({
+            type: "result",
+            message: ok ? "Copilot finished successfully" : `Copilot exited with code ${code}`,
+            color: ok ? "green" : "red",
+          });
+          setTimeout(() => setActionStatus({ type: "idle" }), 5000);
+          refresh();
+        },
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to launch Copilot";
+      setActionStatus({ type: "result", message: msg, color: "red" });
+      setTimeout(() => setActionStatus({ type: "idle" }), 5000);
+    }
+  }, [refresh]);
 
   useInput((input, key) => {
     if (input === "q") {
@@ -55,13 +87,26 @@ export function App({ config }: AppProps): React.ReactElement {
     }
     if (key.tab) {
       setActiveTab((t) => (t === "authored" ? "reviewing" : "authored"));
+      setSelectedPR(null);
     }
-    if (input === "R") {
-      refresh();
+    if (input === "R") refresh();
+
+    // Actions on selected PR
+    if (selectedPR) {
+      if (key.escape) {
+        setSelectedPR(null);
+        return;
+      }
+      if (input === "o") openInBrowser(selectedPR);
+      if (input === "r") launchCopilotForPR(selectedPR, buildReviewPrompt);
+      if (input === "f") launchCopilotForPR(selectedPR, buildFixCIPrompt);
+      if (input === "t") launchCopilotForPR(selectedPR, buildTriagePrompt);
+      if (input === "a") runAction("Approving", () => approvePR(selectedPR));
+      if (input === "m") runAction("Merging", () => mergePR(selectedPR));
     }
   });
 
-  const activePRs = activeTab === "authored" ? authoredPRs : reviewingPRs;
+  const activePRs = activeTab === "authored" ? authored : reviewing;
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="blue" paddingX={1}>
@@ -69,10 +114,10 @@ export function App({ config }: AppProps): React.ReactElement {
       <Box justifyContent="space-between">
         <Box gap={2}>
           <Text bold inverse={activeTab === "authored"} color={activeTab === "authored" ? "blue" : undefined}>
-            {" "}Authored ({authoredPRs.length}){" "}
+            {" "}Authored ({authored.length}){" "}
           </Text>
           <Text bold inverse={activeTab === "reviewing"} color={activeTab === "reviewing" ? "blue" : undefined}>
-            {" "}Reviewing ({reviewingPRs.length}){" "}
+            {" "}Reviewing ({reviewing.length}){" "}
           </Text>
         </Box>
         <Box gap={1}>
@@ -81,11 +126,7 @@ export function App({ config }: AppProps): React.ReactElement {
               <Spinner type="dots" />
             </Text>
           )}
-          {lastRefresh && (
-            <Text dimColor>
-              {timeAgo(lastRefresh.toISOString())}
-            </Text>
-          )}
+          {lastRefresh && <Text dimColor>{timeAgo(lastRefresh.toISOString())}</Text>}
         </Box>
       </Box>
 
@@ -96,12 +137,26 @@ export function App({ config }: AppProps): React.ReactElement {
         </Box>
       )}
 
+      {/* Action Status */}
+      {actionStatus.type === "running" && (
+        <Box paddingX={1} gap={1}>
+          <Text color="yellow"><Spinner type="dots" /></Text>
+          <Text color="yellow">{actionStatus.label}</Text>
+        </Box>
+      )}
+      {actionStatus.type === "result" && (
+        <Box paddingX={1}>
+          <Text color={actionStatus.color as any}>{actionStatus.message}</Text>
+        </Box>
+      )}
+
       {/* PR List */}
       <Box flexDirection="column" marginTop={1}>
         <PRList
           prs={activePRs}
           isActive={!selectedPR}
           onSelect={(pr) => setSelectedPR(pr)}
+          changes={changes}
         />
       </Box>
 
@@ -114,16 +169,31 @@ export function App({ config }: AppProps): React.ReactElement {
           </Box>
           <Text>{selectedPR.branch} → {selectedPR.baseBranch}</Text>
           <Text dimColor>{selectedPR.url}</Text>
+          {selectedPR.topics.length > 0 && (
+            <Text>Topics: {selectedPR.topics.join(", ")}</Text>
+          )}
           <Box marginTop={1}>
-            <Text dimColor>[Esc] Back  [r] Review  [f] Fix CI  [m] Merge  [o] Open in browser</Text>
+            <Text dimColor>
+              [Esc] Back  [r] Review  [f] Fix CI  [t] Triage  [a] Approve  [m] Merge  [o] Open
+            </Text>
           </Box>
+        </Box>
+      )}
+
+      {/* Copilot Output */}
+      {copilotOutput.length > 0 && (
+        <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="yellow" paddingX={1}>
+          <Text bold color="yellow">Copilot Output</Text>
+          {copilotOutput.slice(-5).map((line, i) => (
+            <Text key={i} dimColor>{line.trim()}</Text>
+          ))}
         </Box>
       )}
 
       {/* Footer */}
       <Box marginTop={1} justifyContent="center">
         <Text dimColor>
-          [Tab] Switch view  [j/k] Navigate  [Enter] Select/Collapse  [R] Refresh  [q] Quit
+          [Tab] Switch  [j/k] Navigate  [Enter] Select  [R] Refresh  [q] Quit
         </Text>
       </Box>
     </Box>

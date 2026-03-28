@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { PR } from "../core/types.js";
 import type { TopicGroup } from "../core/classifier.js";
+import type { ChangeSet } from "../hooks/usePRData.js";
 import { groupByTopic } from "../core/classifier.js";
 import { ciIcon, ciColor, reviewText, reviewColor } from "./StatusBadge.js";
 import { timeAgo } from "../core/github.js";
@@ -10,9 +11,10 @@ interface PRListProps {
   prs: PR[];
   isActive: boolean;
   onSelect: (pr: PR) => void;
+  changes?: ChangeSet;
 }
 
-export function PRList({ prs, isActive, onSelect }: PRListProps): React.ReactElement {
+export function PRList({ prs, isActive, onSelect, changes }: PRListProps): React.ReactElement {
   const groups = groupByTopic(prs);
   const flatItems = buildFlatList(groups);
   const [cursor, setCursor] = useState(0);
@@ -72,21 +74,30 @@ export function PRList({ prs, isActive, onSelect }: PRListProps): React.ReactEle
         }
 
         const pr = item.pr!;
+        const isNew = changes?.newPRs.has(pr.number);
+        const ciChanged = changes?.ciChanged.has(pr.number);
+        const newComments = changes?.newComments.has(pr.number);
+        const highlight = isNew || ciChanged || newComments;
         return (
           <Box key={`pr-${pr.number}`} paddingX={2} gap={1}>
             <Text inverse={selected} bold={selected}>
               {selected ? "›" : " "}
             </Text>
+            {isNew && <Text color="green" bold>NEW</Text>}
             <Text color="cyan" inverse={selected}>#{pr.number}</Text>
-            <Text inverse={selected}>
+            <Text inverse={selected} bold={highlight}>
               {pr.branch.length > 25 ? pr.branch.slice(0, 22) + "…" : pr.branch}
             </Text>
-            <Text color={ciColor(pr.ci)} inverse={selected}>{ciIcon(pr.ci)}</Text>
+            <Text color={ciChanged ? "magenta" : ciColor(pr.ci)} inverse={selected} bold={ciChanged}>
+              {ciIcon(pr.ci)}
+            </Text>
             <Text color={reviewColor(pr.reviews)} inverse={selected}>
               {reviewText(pr.reviews)}
             </Text>
             {pr.unresolvedThreads > 0 && (
-              <Text color="yellow" inverse={selected}>💬{pr.unresolvedThreads}</Text>
+              <Text color={newComments ? "magenta" : "yellow"} inverse={selected} bold={newComments}>
+                💬{pr.unresolvedThreads}
+              </Text>
             )}
             <Text dimColor inverse={selected}>{timeAgo(pr.updatedAt)}</Text>
           </Box>
