@@ -91,16 +91,16 @@ export function launchCopilot(task: CopilotTask): { kill: () => void } {
   const coPath = checkoutPath(task.pr);
   const cwd = existsSync(coPath) ? coPath : process.cwd();
 
-  // shell: true is required on Windows for .cmd wrappers.
-  // Pass as a single command string with quoted prompt to avoid word-splitting.
-  // --yolo skips all permission prompts (user already explicitly triggered the action).
-  const escaped = task.prompt.replace(/"/g, '\\"');
-  const command = `copilot -p "${escaped}" --yolo`;
+  // Use PowerShell as shell on Windows — it resolves .cmd wrappers and PATH reliably
+  const escaped = task.prompt.replace(/"/g, '`"');
+  const command = process.platform === "win32"
+    ? `copilot -p "${escaped}" --yolo`
+    : `copilot -p "${task.prompt.replace(/"/g, '\\"')}" --yolo`;
 
   const child = spawn(command, [], {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
-    shell: true,
+    shell: process.platform === "win32" ? "powershell.exe" : true,
   });
 
   child.stdout?.on("data", (data: Buffer) => {
