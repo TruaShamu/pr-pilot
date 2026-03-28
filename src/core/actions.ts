@@ -91,9 +91,20 @@ export function launchCopilot(task: CopilotTask): { kill: () => void } {
   const coPath = checkoutPath(task.pr);
   const cwd = existsSync(coPath) ? coPath : process.cwd();
 
-  const child = spawn("copilot", ["-p", task.prompt], {
+  // On Windows, .cmd wrappers require shell: true. 
+  // We pass the prompt via env var to avoid shell word-splitting.
+  const env = { ...process.env, PR_PILOT_PROMPT: task.prompt };
+  const isWin = process.platform === "win32";
+  const cmd = isWin ? "copilot" : "copilot";
+  const args = isWin
+    ? ["-p", "%PR_PILOT_PROMPT%"]
+    : ["-p", task.prompt];
+
+  const child = spawn(cmd, args, {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
+    shell: true,
+    env,
   });
 
   child.stdout?.on("data", (data: Buffer) => {
@@ -102,6 +113,11 @@ export function launchCopilot(task: CopilotTask): { kill: () => void } {
 
   child.stderr?.on("data", (data: Buffer) => {
     task.onOutput(data.toString());
+  });
+
+  child.on("error", (err) => {
+    task.onOutput(`Error: ${err.message}`);
+    task.onDone(1);
   });
 
   child.on("close", (code) => {
