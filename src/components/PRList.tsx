@@ -6,6 +6,7 @@ import type { ChangeSet } from "../hooks/usePRData.js";
 import { groupByTopic } from "../core/classifier.js";
 import { ciIcon, ciColor, reviewText, reviewColor } from "./StatusBadge.js";
 import { timeAgo } from "../core/github.js";
+import { bodyOneLiner } from "../core/sanitize.js";
 
 interface PRListProps {
   prs: PR[];
@@ -78,13 +79,7 @@ export function PRList({ prs, isActive, onSelect, changes }: PRListProps): React
         const ciChanged = changes?.ciChanged.has(pr.number);
         const newComments = changes?.newComments.has(pr.number);
         const highlight = isNew || ciChanged || newComments;
-        // First line of body, cleaned up
-        const desc = pr.body
-          .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => l && !l.startsWith("#") && !l.startsWith("<!--") && !l.startsWith("---"))
-          [0] || "";
-        const shortDesc = desc.length > 60 ? desc.slice(0, 57) + "…" : desc;
+        const shortDesc = bodyOneLiner(pr.body);
 
         return (
           <Box key={`pr-${pr.number}`} flexDirection="column" paddingX={2}>
