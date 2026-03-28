@@ -98,6 +98,16 @@ export function App({ config }: AppProps): React.ReactElement {
         setSelectedPR(null);
         return;
       }
+      // Navigate between PRs while detail panel is open
+      if (key.upArrow || input === "k" || key.downArrow || input === "j") {
+        const list = activeTab === "authored" ? authored : reviewing;
+        const idx = list.findIndex((p) => p.number === selectedPR.number);
+        if (idx !== -1) {
+          const next = (key.upArrow || input === "k") ? idx - 1 : idx + 1;
+          if (next >= 0 && next < list.length) setSelectedPR(list[next]);
+        }
+        return;
+      }
       if (input === "o") openInBrowser(selectedPR);
       if (input === "r") launchCopilotForPR(selectedPR, buildReviewPrompt);
       if (input === "f") launchCopilotForPR(selectedPR, buildFixCIPrompt);
